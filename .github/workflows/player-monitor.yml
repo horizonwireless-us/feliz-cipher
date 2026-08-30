@@ -39,7 +39,7 @@ jobs:
       - name: Fetch known player configs
         run: |
           if curl -fsS --retry 3 --retry-delay 5 \
-              "https://raw.githubusercontent.com/horizonwireless/feliz-cipher/main/library/src/main/assets/player_configs.json" \
+              "https://raw.githubusercontent.com/horizonwireless-us/feliz-cipher/main/library/src/main/assets/player_configs.json" \
               -o /tmp/player_configs.json; then
             echo "Fetched live player_configs.json from feliz-cipher main"
           else
@@ -190,4 +190,4 @@ jobs:
                within minutes; no APK release needed
             4. Bump deps/cipher.lock in android-client to the new commit
 
-            GitHub issues: https://github.com/horizonwireless/feliz-cipher/issues
+            GitHub issues: https://github.com/horizonwireless-us/feliz-cipher/issues

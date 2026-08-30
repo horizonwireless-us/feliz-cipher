@@ -27,7 +27,7 @@ import java.net.URL
 object PlayerDatesStore {
     private const val TAG = "Zemer_CipherDates"
     private const val REMOTE_URL =
-        "https://raw.githubusercontent.com/horizonwireless/feliz-cipher/main/player_dates.json"
+        "https://raw.githubusercontent.com/horizonwireless-us/feliz-cipher/main/player_dates.json"
 
     // Own dir, NOT the shared cipher_cache (PlayerJsFetcher purges/wipes that one).
     private const val CACHE_DIR = "cipher_dates"

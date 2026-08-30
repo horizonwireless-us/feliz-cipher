@@ -26,7 +26,7 @@ object PlayerConfigStore {
     private const val TAG = "Zemer_CipherConfig"
     private const val ASSET_NAME = "player_configs.json"
     private const val REMOTE_URL =
-        "https://raw.githubusercontent.com/horizonwireless/feliz-cipher/main/library/src/main/assets/player_configs.json"
+        "https://raw.githubusercontent.com/horizonwireless-us/feliz-cipher/main/library/src/main/assets/player_configs.json"
 
     // Mirrors PlayerJsFetcher.CACHE_TTL_MS.
     private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
