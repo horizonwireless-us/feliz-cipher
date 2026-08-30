@@ -1,21 +1,24 @@
-# zemer-cipher
+# feliz-cipher
 
-Android library for YouTube cipher deobfuscation and PoToken generation.
+Android library for YouTube cipher deobfuscation and PoToken generation, forked from
+[`ZemerTeam/zemer-cipher`](https://github.com/ZemerTeam/zemer-cipher) for the Feliz Music
+Android client. The Maven coordinate remains `com.zemer:cipher`; the runtime config source
+is this repository's `main` branch.
 
 ## Origin & adoption
 
 The WebView signature-cipher / n-transform deciphering here (`CipherDeobfuscator`, `CipherWebView`,
-the injected `window._cipherSigFunc`) was **originally written by me
-([alltechdev](https://github.com/alltechdev))** — first implemented into [`zemer-app`](https://github.com/ZemerTeam/zemer-app) on
+the injected `window._cipherSigFunc`) was **originally written by
+[alltechdev](https://github.com/alltechdev)** — first implemented into [`zemer-app`](https://github.com/ZemerTeam/zemer-app) on
 **2026-02-12**
 ([`f905d49`](https://github.com/ZemerTeam/zemer-app/commit/f905d49da8b4486b659fa32d68e2f45f939fb56a)),
 then added to [Metrolist](https://github.com/MetrolistGroup/Metrolist) two days later on **2026-02-14**
 ([`0750a63d`](https://github.com/MetrolistGroup/Metrolist/commit/0750a63d74d69082b81ae8868b06edab51fb3875))
 This repository is that same code, extracted into a standalone Android library
-(`com.zemer:cipher`).
+(`com.zemer:cipher`), forked for Feliz Music.
 
-**Remote config:** [`zemer-app`](https://github.com/ZemerTeam/zemer-app) fetches `player_configs.json`
-from this repo's `master` at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations
+**Remote config:** the Feliz Android client fetches `player_configs.json`
+from this repo's `main` branch at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations
 without an app update. [Metrolist](https://github.com/MetrolistGroup/Metrolist) and
 [Echo-Music](https://github.com/EchoMusicApp/Echo-Music) ship the same configs, mirrored into their
 own repos rather than fetched from here.
@@ -34,7 +37,7 @@ code only and do **not** pull config updates from here. Verified examples:
 - Signature cipher deobfuscation for YouTube streaming URLs
 - N-parameter transformation to avoid throttling
 - PoToken generation using BotGuard
-- **Remote-updatable player configs** — a config pushed to this repo's `master` fixes
+- **Remote-updatable player configs** — a config pushed to this repo's `main` fixes
   deployed apps within minutes, no APK release needed
 
 ## Player configs (`library/src/main/assets/player_configs.json`)
@@ -44,10 +47,10 @@ YouTube rotates its `player_ias` JS frequently; each rotation needs a per-player
 **one JSON file**, which is:
 
 1. **Bundled** in the APK as the offline default,
-2. **Fetched at runtime** by `PlayerConfigStore` from this repo's raw `master` URL
+2. **Fetched at runtime** by `PlayerConfigStore` from this repo's raw `main` URL
    (6 h TTL + ETag), and **force-refreshed the moment an unknown player breaks
-   deciphering** — so pushing a new entry to `master` is the deploy,
-3. Read by the `zemer-app` test harness — app, devices, and tests cannot drift apart.
+   deciphering** — so pushing a new entry to `main` is the deploy,
+3. Read by the Feliz Android test harness — app, devices, and tests cannot drift apart.
 
 ### Entry shape (schemaVersion 1)
 
@@ -63,13 +66,13 @@ YouTube rotates its `player_ias` JS frequently; each rotation needs a per-player
 
 ### Adding a rotated player
 
-1. In `zemer-app`: `node tests/validate-player-config.mjs <hash>` — deciphers a real stream
+1. In the Feliz Android repo (`android-client`): `node tests/validate-player-config.mjs <hash>` — deciphers a real stream
    and checks the CDN returns **HTTP 206** (the only ground truth; multiple constant pairs
    can "decipher" while only one is accepted). It prints a paste-ready JSON entry.
 2. Add the entry to `player_configs.json` here. Duplicate hashes/aliases reject the whole
    file — run the unit tests.
-3. Push to `master` — deployed apps self-heal from that URL within minutes.
-4. Bump the submodule pointer in `zemer-app` afterwards (bundled defaults stay fresh).
+3. Push to `main` — deployed apps self-heal from that URL within minutes.
+4. Bump `deps/cipher.lock` in `android-client` afterwards (bundled defaults stay fresh).
 
 ### Safety model
 
@@ -80,7 +83,7 @@ last-good table. Bump `schemaVersion` **only** on breaking shape changes — old
 newer schema files and keep working from their last-good table.
 
 Run the tests with `./gradlew :library:testDebugUnitTest`. The `config-parity/` fixtures are
-shared with the `zemer-app` harness: file-level accept/reject verdicts (and the n-IIFE
+shared with the Feliz Android harness: file-level accept/reject verdicts (and the n-IIFE
 template) are pinned byte-for-byte across both readers.
 
 ## Usage

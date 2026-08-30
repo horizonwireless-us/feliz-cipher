@@ -15,7 +15,7 @@ import java.io.File
 
 /**
  * Owns the player-config table at runtime: bundled asset as the offline default, overlaid
- * by the same JSON fetched from the zemer-cipher repo so rotated players are fixed without
+ * by the same JSON fetched from the Feliz cipher repo so rotated players are fixed without
  * an APK update. Parsing/validation is delegated to [PlayerConfigParser]; only validated
  * payloads ever replace the in-memory map or touch the disk cache.
  *
@@ -26,7 +26,7 @@ object PlayerConfigStore {
     private const val TAG = "Zemer_CipherConfig"
     private const val ASSET_NAME = "player_configs.json"
     private const val REMOTE_URL =
-        "https://raw.githubusercontent.com/ZemerTeam/zemer-cipher/master/library/src/main/assets/player_configs.json"
+        "https://raw.githubusercontent.com/horizonwireless/feliz-cipher/main/library/src/main/assets/player_configs.json"
 
     // Mirrors PlayerJsFetcher.CACHE_TTL_MS.
     private const val REFRESH_TTL_MS = 6 * 60 * 60 * 1000L
