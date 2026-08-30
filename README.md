@@ -19,18 +19,7 @@ This repository is that same code, extracted into a standalone Android library
 
 **Remote config:** the Feliz Android client fetches `player_configs.json`
 from this repo's `main` branch at runtime (via `PlayerConfigStore`) to self-heal YouTube player rotations
-without an app update. [Metrolist](https://github.com/MetrolistGroup/Metrolist) and
-[Echo-Music](https://github.com/EchoMusicApp/Echo-Music) ship the same configs, mirrored into their
-own repos rather than fetched from here.
-
-**Code reuse:** the deciphering code has also been copied into many other projects — these bundle the
-code only and do **not** pull config updates from here. Verified examples:
-
-- [Flow](https://github.com/A-EDev/Flow)
-- [Kreate](https://github.com/knighthat/Kreate)
-- [Meld](https://github.com/FrancescoGrazioso/Meld)
-
-…plus dozens of other forks and derivative apps.
+without an app update. 
 
 ## Features
 
@@ -52,17 +41,6 @@ YouTube rotates its `player_ias` JS frequently; each rotation needs a per-player
    deciphering** — so pushing a new entry to `main` is the deploy,
 3. Read by the Feliz Android test harness — app, devices, and tests cannot drift apart.
 
-### Entry shape (schemaVersion 1)
-
-```json
-"445213fb": { "sig": "mP(4,155,INPUT)", "nClass": "Yx", "sts": 20613, "aliases": ["d62bd338"] }
-```
-
-- key — the 8-hex player hash from the player JS URL; `aliases` — the md5-of-first-10000-bytes
-  fallback hash
-- `sig` — the signature deobfuscation call, locked to `name(int,int,INPUT)`
-- `nClass` — the URL class for the n-transform IIFE (built from a local template)
-- `sts` — the player's signatureTimestamp
 
 ### Adding a rotated player
 
@@ -86,37 +64,7 @@ Run the tests with `./gradlew :library:testDebugUnitTest`. The `config-parity/` 
 shared with the Feliz Android harness: file-level accept/reject verdicts (and the n-IIFE
 template) are pinned byte-for-byte across both readers.
 
-## Usage
 
-### Initialization
-
-```kotlin
-// Initialize in your Application class
-ZemerCipher.initialize(
-    context = applicationContext,
-    proxy = yourProxy,  // optional
-    debugLogging = BuildConfig.DEBUG  // optional
-)
-```
-
-### Cipher Deobfuscation
-
-```kotlin
-// Deobfuscate a signature cipher URL
-val deobfuscatedUrl = CipherDeobfuscator.deobfuscateStreamUrl(signatureCipher, videoId)
-
-// Transform n-parameter in URL
-val transformedUrl = CipherDeobfuscator.transformNParamInUrl(url)
-```
-
-### PoToken Generation
-
-```kotlin
-val generator = PoTokenGenerator()
-val result = generator.getWebClientPoToken(videoId, sessionId)
-// result.playerRequestPoToken - for player requests
-// result.streamingDataPoToken - for streaming data requests
-```
 
 ## Credits
 
