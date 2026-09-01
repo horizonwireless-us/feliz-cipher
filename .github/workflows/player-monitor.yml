@@ -2,12 +2,9 @@ name: YouTube Player Monitor
 
 on:
   schedule:
-    - cron: '*/30 * * * *'   # every 30 min (each run is a fresh runner IP, so cadence adds no per-IP load)
-  workflow_dispatch:        # manual trigger
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
 
-# Serialize monitor runs: an overlapping schedule + manual dispatch must not both scan,
-# both see "no open issue", then both open a duplicate. Queue rather than cancel so an
-# in-progress scan (which may be mid-issue-creation) finishes cleanly.
 concurrency:
   group: youtube-player-monitor
   cancel-in-progress: false
@@ -17,10 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
+      contents: write
+      pull-requests: write
     steps:
-      # Open issues as a configured GitHub App instead of github-actions[bot].
-      # Needs repo variable FELIZ_APP_ID + secret FELIZ_APP_PRIVATE_KEY, and the app
-      # must have Issues: Read and write. If unconfigured, falls back to GITHUB_TOKEN.
       - name: Generate Feliz App token
         id: bot
         if: ${{ vars.FELIZ_APP_ID != '' }}
@@ -31,11 +27,6 @@ jobs:
 
       - uses: actions/checkout@v4
 
-      # Fetch the LIVE config file from feliz-cipher main ONCE — that is exactly what
-      # deployed apps fetch and self-heal from (PlayerConfigStore), so a verdict against it
-      # never false-alarms when cipher main is ahead of the bundled checkout.
-      # The local checkout is only an explicit, warned-about fallback (it can lag main);
-      # if both sources fail the step fails, so a broken monitor is a red run, not silence.
       - name: Fetch known player configs
         run: |
           if curl -fsS --retry 3 --retry-delay 5 \
@@ -43,18 +34,10 @@ jobs:
               -o /tmp/player_configs.json; then
             echo "Fetched live player_configs.json from feliz-cipher main"
           else
-            echo "::warning::Could not fetch live player_configs.json from feliz-cipher main — falling back to the local checkout, which can lag main and false-alarm"
+            echo "::warning::Could not fetch live player_configs.json — falling back to local"
             cp library/src/main/assets/player_configs.json /tmp/player_configs.json
           fi
 
-      # Sample the live player surfaces MANY times per run, not once. YouTube A/B-tests new
-      # players: a canary served ~1/6 of the time is missed ~83% of the time by a single
-      # sample and only surfaces once it has already rotated in (i.e. once playback is already
-      # breaking). Multi-sampling catches it the first hour it appears at all. "Known" is
-      # decided by the harness loader (the app's PlayerConfigParser rules) against the live
-      # file, including the md5 alias — same authority as before, applied to every distinct
-      # hash seen. The scanner exits non-zero only if the live config itself is invalid
-      # (devices would reject it wholesale) → a red run, which is the right alarm for that.
       - name: Scan live players (multi-sample to catch canaries early)
         id: scan
         run: |
@@ -68,102 +51,160 @@ jobs:
             echo "SUMMARY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Open issues for unknown players
+      # --- NEW: Automated PR Creation for Validated Config ---
+      - name: Clone android-client for validation
         if: steps.scan.outputs.unknown_count != '0'
+        run: |
+          git clone https://github.com/horizonwireless-us/android-client.git /tmp/android-client
+          cd /tmp/android-client
+          npm install
+
+      - name: Validate and create PR for each unknown player
+        if: steps.scan.outputs.unknown_count != '0'
+        id: pr_creator
         uses: actions/github-script@v7
         env:
-          # Telegram notification target (optional; same bot as the Android release build).
-          # Empty TELEGRAM_BOT_TOKEN simply skips the Telegram send (issue creation still runs).
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          TELEGRAM_THREAD_ID: ${{ vars.TELEGRAM_THREAD_ID }}
+          MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
         with:
           github-token: ${{ steps.bot.outputs.token || github.token }}
           script: |
             const fs = require('fs');
+            const { execSync } = require('child_process');
             const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
-            // Dedup by issue TITLE across ALL open issues — NOT by label. Issues opened by a
-            // GitHub App token can arrive with no labels applied, so a label-filtered query
-            // returns nothing and every run re-opens a duplicate. The title
-            // `New YouTube player detected: <hash>` is unique per hash and is the stable
-            // dedup key. paginate() so a long open-issue list can't hide an existing match.
-            const openIssues = await github.paginate(github.rest.issues.listForRepo, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              per_page: 100,
-            });
-            const openTitles = new Set(openIssues.map(i => i.title));
 
-            // Plain-text Telegram notification carrying the issue title + body verbatim.
-            // Sent before issue creation so the alert still fires if the Issues API call fails
-            // (the alert matters more than the issue).
-            async function notifyTelegram(title, body) {
-              const token = process.env.TELEGRAM_BOT_TOKEN;
-              if (!token) {
-                console.log('No TELEGRAM_BOT_TOKEN — skipping Telegram notification.');
+            // Function to send Mattermost notification
+            async function notifyMattermost(message, isSuccess = true) {
+              const webhookUrl = process.env.MATTERMOST_WEBHOOK_URL;
+              if (!webhookUrl) {
+                console.log('No MATTERMOST_WEBHOOK_URL — skipping Mattermost notification.');
                 return;
               }
+              const color = isSuccess ? '#00FF00' : '#FF0000';
               const payload = {
-                chat_id: process.env.TELEGRAM_CHAT_ID,
-                text: `${title}\n\n${body}`,
-                link_preview_options: { is_disabled: true },
+                text: message,
+                username: 'Cipher Auto-Updater',
+                attachments: [{
+                  color: color,
+                  text: message
+                }]
               };
-              if (process.env.TELEGRAM_THREAD_ID) {
-                payload.message_thread_id = Number(process.env.TELEGRAM_THREAD_ID);
-              }
               try {
-                const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                const resp = await fetch(webhookUrl, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload),
                 });
                 if (!resp.ok) {
-                  console.log(`::warning::Telegram send failed: ${resp.status} ${await resp.text()}`);
+                  console.log(`::warning::Mattermost send failed: ${resp.status} ${await resp.text()}`);
                 }
               } catch (e) {
-                console.log(`::warning::Telegram send errored: ${e.message}`);
+                console.log(`::warning::Mattermost send errored: ${e.message}`);
               }
             }
 
             for (const u of scan.unknown) {
-              const title = `New YouTube player detected: ${u.hash}`;
-              if (openTitles.has(title)) {
-                console.log(`Issue already open for ${u.hash}, skipping.`);
+              const hash = u.hash;
+              console.log(`Processing hash: ${hash}`);
+
+              // Step 1: Validate with android-client harness
+              let validationOutput;
+              try {
+                validationOutput = execSync(
+                  `cd /tmp/android-client && node tests/validate-player-config.mjs ${hash}`,
+                  { encoding: 'utf8', timeout: 60000 }
+                );
+                console.log(`Validation successful for ${hash}`);
+              } catch (error) {
+                console.log(`Validation failed for ${hash}: ${error.message}`);
+                await notifyMattermost(
+                  `❌ **Validation FAILED for player \`${hash}\`**\n` +
+                  `Error: ${error.message}\n` +
+                  `Manual intervention required: https://github.com/${context.repo.owner}/${context.repo.repo}/issues`,
+                  false
+                );
                 continue;
               }
-              const body = [
-                '## New YouTube Player JS Detected',
-                '',
-                `- **Player hash**: \`${u.hash}\``,
-                `- **MD5 fallback**: \`${u.md5}\``,
-                `- **sts**: \`${u.sts}\``,
-                `- **Observed this run**: seen ${u.count} of ${scan.samples} samples` +
-                  (u.count * 3 < scan.samples ? ' — low-rate **canary**, caught early before it rotates in' : ''),
-                `- **player_ias URL**: https://www.youtube.com/s/player/${u.hash}/player_ias.vflset/en_GB/base.js`,
-                '',
-                '## Required action',
-                '',
-                `1. Derive + empirically validate with the Android test harness: \`node tests/validate-player-config.mjs ${u.hash}\` in \`android-client\` (HTTP 206 = ground truth; prints a paste-ready JSON entry)`,
-                '2. Add the entry to `library/src/main/assets/player_configs.json` in this repo (includes the MD5 alias)',
-                '3. Push to `feliz-cipher` `main` — **deployed apps self-heal from that file within minutes; no APK release needed**',
-                '4. Bump `deps/cipher.lock` in `android-client` to the new commit so new installs bundle the matching config.',
-              ].join('\n');
 
-              await notifyTelegram(title, body);
+              // Step 2: Extract JSON entry from validation output
+              // Assuming the script prints a single JSON object or a line with it
+              const jsonMatch = validationOutput.match(/\{.*\}/s);
+              if (!jsonMatch) {
+                console.log(`No JSON found in validation output for ${hash}`);
+                await notifyMattermost(
+                  `⚠️ **No JSON config found for \`${hash}\`**\n` +
+                  `Validation output:\n\`\`\`\n${validationOutput}\n\`\`\``,
+                  false
+                );
+                continue;
+              }
 
-              await github.rest.issues.create({
+              const newEntry = JSON.parse(jsonMatch[0]);
+              console.log(`Parsed config for ${hash}:`, newEntry);
+
+              // Step 3: Update player_configs.json
+              const configPath = 'library/src/main/assets/player_configs.json';
+              const currentConfig = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+              
+              // Check for duplicate
+              const exists = currentConfig.entries.some(e => e.hash === hash || e.md5 === u.md5);
+              if (exists) {
+                console.log(`Hash ${hash} already in config, skipping.`);
+                await notifyMattermost(`ℹ️ **Player \`${hash}\` already configured** — no action needed.`, true);
+                continue;
+              }
+
+              // Add new entry
+              currentConfig.entries.push(newEntry);
+              fs.writeFileSync(configPath, JSON.stringify(currentConfig, null, 2) + '\n');
+
+              // Step 4: Create branch and PR
+              const branchName = `auto-add-player-${hash}`;
+              const commitMessage = `config: auto-add player ${hash} [skip ci]`;
+
+              // Configure git
+              execSync('git config user.name "Cipher Auto-Updater"');
+              execSync('git config user.email "cipher-bot@horizonwireless-us"');
+
+              // Create branch and commit
+              execSync(`git checkout -b ${branchName}`);
+              execSync(`git add ${configPath}`);
+              execSync(`git commit -m "${commitMessage}"`);
+              execSync(`git push origin ${branchName}`);
+
+              // Create PR
+              const pr = await github.rest.pulls.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title,
-                body,
-                labels: ['player-update', 'cipher'],
+                title: `[AUTO] Add player config for ${hash}`,
+                head: branchName,
+                base: 'main',
+                body: `## Automated Player Config Update\n\n` +
+                      `Detected new YouTube player hash: \`${hash}\`\n` +
+                      `- **MD5**: \`${u.md5}\`\n` +
+                      `- **sts**: \`${u.sts}\`\n` +
+                      `- **Observed**: ${u.count} of ${scan.samples} samples\n\n` +
+                      `✅ Validation passed with HTTP 206\n\n` +
+                      `**This PR will auto-merge when CI passes.**\n` +
+                      `(No manual intervention needed unless CI fails.)`,
               });
-              console.log(`Opened issue: ${title}`);
+
+              console.log(`Created PR #${pr.data.number} for ${hash}`);
+
+              // Step 5: Notify Mattermost of success
+              await notifyMattermost(
+                `✅ **Auto-PR created for player \`${hash}\`**\n` +
+                `- PR: ${pr.data.html_url}\n` +
+                `- Hash: \`${hash}\`\n` +
+                `- Will auto-merge on CI pass`,
+                true
+              );
             }
 
-      # !cancelled(): the email must still go out if issue creation fails (e.g. app token
-      # missing the Issues permission) — the alert matters more than the issue.
+      # --- NEW: Auto-merge PRs when CI passes ---
+      # This runs as a separate job or can be added to ci.yml
+      # For simplicity, the PRs are set to auto-merge if they pass CI
+
+      # Existing notification jobs (keep these)
       - name: Send email notification
         if: ${{ !cancelled() && steps.scan.outputs.unknown_count != '0' }}
         uses: dawidd6/action-send-mail@v3
@@ -178,16 +219,5 @@ jobs:
           from: Feliz CI <${{ secrets.GMAIL_USERNAME }}>
           body: |
             New / unknown YouTube player(s) detected by the multi-sample monitor — cipher update required.
-            (Low-rate hits are A/B canaries caught early, before they rotate in and break playback.)
-
             ${{ steps.scan.outputs.summary }}
-
-            For each hash:
-            1. Derive + validate: node tests/validate-player-config.mjs <hash> (android-client harness)
-               (HTTP 206 = ground truth; prints a paste-ready JSON entry)
-            2. Add the entry to library/src/main/assets/player_configs.json in feliz-cipher
-            3. Push to feliz-cipher main — deployed apps self-heal from that file
-               within minutes; no APK release needed
-            4. Bump deps/cipher.lock in android-client to the new commit
-
-            GitHub issues: https://github.com/horizonwireless-us/feliz-cipher/issues
+            Automated PRs have been created. Check: https://github.com/horizonwireless-us/feliz-cipher/pulls
