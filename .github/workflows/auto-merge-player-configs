@@ -1,0 +1,7 @@
+# Add this as a separate workflow or job
+- name: Enable auto-merge
+  if: steps.pr_creator.outputs.pr_number != ''
+  run: |
+    gh pr merge ${{ steps.pr_creator.outputs.pr_number }} --auto --merge
+  env:
+    GH_TOKEN: ${{ steps.bot.outputs.token || github.token }}
