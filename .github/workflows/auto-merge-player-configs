@@ -31,28 +31,18 @@ jobs:
             echo "CI status: $STATUS (attempt $i/30)"
             
             if [ "$STATUS" = "success" ]; then
-              echo "✅ CI passed! Enabling auto-merge..."
+              echo "CI passed! Enabling auto-merge..."
               gh pr merge ${{ github.event.pull_request.number }} --auto --merge --delete-branch
-              echo "✅ Auto-merge enabled with branch deletion"
+              echo "Auto-merge enabled with branch deletion"
               exit 0
             elif [ "$STATUS" = "failure" ]; then
-              echo "❌ CI failed! Not enabling auto-merge."
+              echo "CI failed! Not enabling auto-merge."
               exit 1
             fi
             sleep 10
           done
           
-          echo "⏱️ Timeout waiting for CI status"
+          echo "Timeout waiting for CI status"
           exit 1
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
-      - name: Post success to Mattermost (optional)
-        if: success()
-        run: |
-          curl -X POST -H 'Content-Type: application/json' \
-            -d '{
-              "text": "✅ **PR #${{ github.event.pull_request.number }} will auto-merge**\n- Config: `${{ github.event.pull_request.title }}`\n- URL: ${{ github.event.pull_request.html_url }}\n- Branch deletion enabled",
-              "username": "Auto-Merge Bot"
-            }' \
-            ${{ secrets.MATTERMOST_WEBHOOK_URL }}
