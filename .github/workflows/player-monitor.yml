@@ -53,12 +53,12 @@ jobs:
 
       # --- NEW: Automated PR Creation for Validated Config ---
       - name: Clone android-client for validation
-        if: steps.scan.outputs.unknown_count != '0'
-        run: |
-          git clone https://github.com/horizonwireless-us/android-client.git /tmp/android-client
-          cd /tmp/android-client
-          npm install
-
+  if: steps.scan.outputs.unknown_count != '0'
+  uses: actions/checkout@v4
+  with:
+    repository: horizonwireless-us/android-client
+    path: /tmp/android-client
+    token: ${{ steps.bot.outputs.token || github.token }}
       - name: Validate and create PR for each unknown player
         if: steps.scan.outputs.unknown_count != '0'
         id: pr_creator
