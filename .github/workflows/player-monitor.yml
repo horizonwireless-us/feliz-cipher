@@ -12,23 +12,14 @@ concurrency:
 jobs:
   check-player:
     runs-on: ubuntu-latest
-
     permissions:
-      issues: write
-      contents: write
-      pull-requests: write
+      contents: read
 
     steps:
-      - name: Generate Feliz App token
-        id: bot
-        if: ${{ vars.FELIZ_APP_ID != '' }}
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ vars.FELIZ_APP_ID }}
-          private-key: ${{ secrets.FELIZ_APP_PRIVATE_KEY }}
-
       - name: Checkout feliz-cipher
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+        with:
+          token: ${{ secrets.FELIZ_BOT_TOKEN }}
 
       - name: Fetch known player configs
         run: |
@@ -37,273 +28,324 @@ jobs:
               -o /tmp/player_configs.json; then
             echo "Fetched live player_configs.json from feliz-cipher main"
           else
-            echo "::warning::Could not fetch live player_configs.json — falling back to local"
+            echo "::warning::Could not fetch live player_configs.json - falling back to checked-out copy"
             cp library/src/main/assets/player_configs.json /tmp/player_configs.json
           fi
 
-      - name: Scan live players (multi-sample to catch canaries early)
+      - name: Scan live players
         id: scan
         run: |
           node monitor/scan-live-players.mjs /tmp/player_configs.json 30 > /tmp/scan.json 2> /tmp/scan.log
           cat /tmp/scan.log
 
-          COUNT=$(node -e "process.stdout.write(String((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).unknown||[]).length))")
+          COUNT=$(node -e "process.stdout.write(String((JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')).unknown || []).length))")
           echo "unknown_count=$COUNT" >> "$GITHUB_OUTPUT"
 
           {
             echo "summary<<SUMMARY_EOF"
-            node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8'));console.log((s.unknown||[]).map(u=>'- '+u.hash+' (seen '+u.count+'x of '+s.samples+', md5 '+u.md5+', sts '+u.sts+')').join('\n'))"
+            node -e "const s=JSON.parse(require('fs').readFileSync('/tmp/scan.json','utf8')); console.log((s.unknown || []).map(u => '- ' + u.hash + ' (seen ' + u.count + 'x of ' + s.samples + ', md5 ' + u.md5 + ', sts ' + u.sts + ')').join('\n'))"
             echo "SUMMARY_EOF"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Clone android-client for validation
+      - name: Checkout feliz-music for validation
         if: steps.scan.outputs.unknown_count != '0'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          repository: horizonwireless-us/android-client
-          path: android-client
-          token: ${{ steps.bot.outputs.token || github.token }}
+          repository: horizonwireless-us/feliz-music
+          path: feliz-music
+          token: ${{ secrets.FELIZ_BOT_TOKEN }}
+          persist-credentials: false
 
-      - name: Validate, post config to Mattermost, and create PR
+      - name: Set up Node.js for validator
         if: steps.scan.outputs.unknown_count != '0'
-        id: pr_creator
-        uses: actions/github-script@v7
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: feliz-music/tests/package-lock.json
+
+      - name: Install validator dependencies
+        if: steps.scan.outputs.unknown_count != '0'
+        working-directory: feliz-music/tests
+        run: npm ci
+
+      - name: Validate configs, notify Mattermost, and create one PR
+        if: steps.scan.outputs.unknown_count != '0'
+        id: update
+        uses: actions/github-script@v9
         env:
           MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
+          YT_COOKIE: ${{ secrets.YT_COOKIE }}
+          YT_VISITOR_DATA: ${{ secrets.YT_VISITOR_DATA }}
         with:
-          github-token: ${{ steps.bot.outputs.token || github.token }}
+          github-token: ${{ secrets.FELIZ_BOT_TOKEN }}
           script: |
             const fs = require('fs');
             const path = require('path');
-            const { execSync } = require('child_process');
+            const { execFileSync } = require('child_process');
 
-            const scan = JSON.parse(
-              fs.readFileSync('/tmp/scan.json', 'utf8')
-            );
+            const workspace = process.env.GITHUB_WORKSPACE;
+            const musicDir = path.join(workspace, 'feliz-music');
+            const configPath = 'library/src/main/assets/player_configs.json';
+            const absoluteConfigPath = path.join(workspace, configPath);
+            const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
 
             async function notifyMattermost(message, isSuccess = true) {
               const webhookUrl = process.env.MATTERMOST_WEBHOOK_URL;
-
               if (!webhookUrl) {
-                console.log(
-                  '::warning::No MATTERMOST_WEBHOOK_URL — skipping Mattermost notification.'
-                );
+                core.warning('No MATTERMOST_WEBHOOK_URL - skipping Mattermost notification.');
                 return false;
               }
 
-              const color = isSuccess ? '#00FF00' : '#FF0000';
-
               const payload = {
                 username: 'Cipher Auto-Updater',
-                attachments: [
-                  {
-                    color,
-                    text: message
-                  }
-                ]
+                attachments: [{
+                  color: isSuccess ? '#00FF00' : '#FF0000',
+                  text: message
+                }]
               };
 
               try {
-                const resp = await fetch(webhookUrl, {
+                const response = await fetch(webhookUrl, {
                   method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json'
-                  },
+                  headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(payload)
                 });
 
-                if (!resp.ok) {
-                  console.log(
-                    `::warning::Mattermost send failed: ${resp.status} ${await resp.text()}`
-                  );
+                if (!response.ok) {
+                  core.warning(`Mattermost send failed: ${response.status} ${await response.text()}`);
                   return false;
                 }
 
                 console.log('Mattermost notification sent successfully.');
                 return true;
-              } catch (e) {
-                console.log(
-                  `::warning::Mattermost send errored: ${e.message}`
-                );
+              } catch (error) {
+                core.warning(`Mattermost send errored: ${error.message}`);
                 return false;
               }
             }
 
-            for (const u of scan.unknown || []) {
-              const hash = u.hash;
+            function parseValidatedEntry(hash, output) {
+              const escapedHash = hash.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const match = output.match(
+                new RegExp(`^\\s*"${escapedHash}"\\s*:\\s*(\\{[^\\r\\n]+\\})\\s*$`, 'm')
+              );
 
-              console.log(`Processing hash: ${hash}`);
+              if (!match) {
+                throw new Error('Validator succeeded but no paste-ready player config line was found.');
+              }
 
-              // Step 1: Validate with android-client harness
-              let validationOutput;
+              const entry = JSON.parse(match[1]);
+              if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+                throw new Error('Validator returned an invalid player config object.');
+              }
 
-              try {
-                const androidClientPath = path.join(
-                  process.env.GITHUB_WORKSPACE,
-                  'android-client'
+              return entry;
+            }
+
+            function findCollision(players, hash, entry) {
+              const newAliases = new Set(entry.aliases || []);
+
+              for (const [existingHash, existing] of Object.entries(players)) {
+                const existingAliases = new Set(existing.aliases || []);
+                if (existingHash === hash) return existingHash;
+                if (newAliases.has(existingHash)) return existingHash;
+                if (existingAliases.has(hash)) return existingHash;
+                for (const alias of newAliases) {
+                  if (existingAliases.has(alias)) return existingHash;
+                }
+              }
+
+              return null;
+            }
+
+            if (!process.env.YT_COOKIE) {
+              throw new Error('YT_COOKIE secret is missing.');
+            }
+            if (!process.env.YT_VISITOR_DATA) {
+              throw new Error('YT_VISITOR_DATA secret is missing.');
+            }
+
+            const currentConfig = JSON.parse(fs.readFileSync(absoluteConfigPath, 'utf8'));
+            if (!currentConfig.players || typeof currentConfig.players !== 'object') {
+              throw new Error('player_configs.json does not contain the expected players object.');
+            }
+
+            const additions = [];
+            const failures = [];
+
+            for (const unknown of scan.unknown || []) {
+              const hash = unknown.hash;
+
+              if (!/^[a-f0-9]{8}$/.test(hash)) {
+                failures.push(`${hash}: unexpected hash format`);
+                await notifyMattermost(
+                  `❌ **Rejected unexpected player hash** \`${hash}\``,
+                  false
                 );
+                continue;
+              }
 
-                validationOutput = execSync(
-                  `node tests/validate-player-config.mjs ${hash}`,
+              console.log(`Validating player ${hash} with feliz-music...`);
+
+              let validationOutput;
+              try {
+                validationOutput = execFileSync(
+                  'node',
+                  ['tests/validate-player-config.mjs', hash],
                   {
-                    cwd: androidClientPath,
+                    cwd: musicDir,
                     encoding: 'utf8',
-                    timeout: 60000
+                    timeout: 180000,
+                    env: process.env,
+                    maxBuffer: 4 * 1024 * 1024
                   }
                 );
-
-                console.log(`Validation successful for ${hash}`);
               } catch (error) {
-                console.log(
-                  `Validation failed for ${hash}: ${error.message}`
-                );
+                const stdout = String(error.stdout || '').slice(-4000);
+                const stderr = String(error.stderr || '').slice(-4000);
+                const detail = [stdout, stderr].filter(Boolean).join('\n').trim();
+                failures.push(`${hash}: validator failed`);
 
                 await notifyMattermost(
-                  `❌ **Validation FAILED for player \`${hash}\`**\n` +
-                  `Error: ${error.message}\n` +
-                  `Manual intervention required: https://github.com/${context.repo.owner}/${context.repo.repo}/issues`,
+                  `❌ **Validation FAILED for player \`${hash}\`**\n\n` +
+                  (detail ? `\`\`\`\n${detail}\n\`\`\`` : `Error: ${error.message}`),
                   false
                 );
-
                 continue;
               }
 
-              // Step 2: Extract JSON entry from validation output
-              const jsonMatch = validationOutput.match(/\{.*\}/s);
-
-              if (!jsonMatch) {
-                console.log(
-                  `No JSON found in validation output for ${hash}`
-                );
-
-                await notifyMattermost(
-                  `⚠️ **No JSON config found for \`${hash}\`**\n` +
-                  `Validation output:\n\`\`\`\n${validationOutput}\n\`\`\``,
-                  false
-                );
-
-                continue;
-              }
-
-              let newEntry;
-
+              let entry;
               try {
-                newEntry = JSON.parse(jsonMatch[0]);
+                entry = parseValidatedEntry(hash, validationOutput);
               } catch (error) {
-                console.log(
-                  `Could not parse validation JSON for ${hash}: ${error.message}`
-                );
-
+                failures.push(`${hash}: ${error.message}`);
                 await notifyMattermost(
-                  `⚠️ **Invalid JSON returned for \`${hash}\`**\n` +
-                  `Error: ${error.message}`,
+                  `❌ **Could not parse validated config for \`${hash}\`**\n\n` +
+                  `${error.message}\n\n` +
+                  `\`\`\`\n${validationOutput.slice(-4000)}\n\`\`\``,
                   false
                 );
-
                 continue;
               }
 
-              console.log(`Parsed config for ${hash}:`, newEntry);
+              const collision = findCollision(currentConfig.players, hash, entry);
+              if (collision) {
+                console.log(`Player ${hash} is already represented by ${collision}; skipping.`);
+                await notifyMattermost(
+                  `ℹ️ **Player \`${hash}\` is already represented by \`${collision}\`** - no config change is required.`,
+                  true
+                );
+                continue;
+              }
 
-              // Post the validated player config immediately.
-              // This happens before git/PR work so a later failure does not
-              // prevent the config from reaching Mattermost.
+              currentConfig.players[hash] = entry;
+              additions.push({ hash, entry, observed: unknown });
+
               await notifyMattermost(
                 `🧩 **Validated YouTube player config**\n\n` +
                 `- **Hash:** \`${hash}\`\n` +
-                `- **MD5:** \`${u.md5}\`\n` +
-                `- **sts:** \`${u.sts}\`\n` +
-                `- **Observed:** ${u.count} of ${scan.samples} samples\n\n` +
-                `**Player config:**\n` +
-                `\`\`\`json\n${JSON.stringify(newEntry, null, 2)}\n\`\`\``,
-                true
-              );
-
-              // Step 3: Update player_configs.json
-              const configPath =
-                'library/src/main/assets/player_configs.json';
-
-              const currentConfig = JSON.parse(
-                fs.readFileSync(configPath, 'utf8')
-              );
-
-              const exists = currentConfig.entries.some(
-                e => e.hash === hash || e.md5 === u.md5
-              );
-
-              if (exists) {
-                console.log(
-                  `Hash ${hash} already in config, skipping.`
-                );
-
-                await notifyMattermost(
-                  `ℹ️ **Player \`${hash}\` already configured** — config was validated and posted above; no PR is needed.`,
-                  true
-                );
-
-                continue;
-              }
-
-              currentConfig.entries.push(newEntry);
-
-              fs.writeFileSync(
-                configPath,
-                JSON.stringify(currentConfig, null, 2) + '\n'
-              );
-
-              // Step 4: Create branch and PR
-              const branchName = `auto-add-player-${hash}`;
-              const commitMessage =
-                `config: auto-add player ${hash} [skip ci]`;
-
-              execSync(
-                'git config user.name "Cipher Auto-Updater"'
-              );
-
-              execSync(
-                'git config user.email "cipher-bot@horizonwireless-us"'
-              );
-
-              execSync(`git checkout -b ${branchName}`);
-              execSync(`git add ${configPath}`);
-              execSync(`git commit -m "${commitMessage}"`);
-              execSync(`git push origin ${branchName}`);
-
-              const pr = await github.rest.pulls.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: `[AUTO] Add player config for ${hash}`,
-                head: branchName,
-                base: 'main',
-                body:
-                  `## Automated Player Config Update\n\n` +
-                  `Detected new YouTube player hash: \`${hash}\`\n` +
-                  `- **MD5**: \`${u.md5}\`\n` +
-                  `- **sts**: \`${u.sts}\`\n` +
-                  `- **Observed**: ${u.count} of ${scan.samples} samples\n\n` +
-                  `✅ Validation passed with HTTP 206\n\n` +
-                  `**This PR will auto-merge when CI passes.**\n` +
-                  `(No manual intervention needed unless CI fails.)`
-              });
-
-              console.log(
-                `Created PR #${pr.data.number} for ${hash}`
-              );
-
-              // Step 5: Post PR result to Mattermost
-              await notifyMattermost(
-                `✅ **Auto-PR created for player \`${hash}\`**\n` +
-                `- PR: ${pr.data.html_url}\n` +
-                `- Hash: \`${hash}\`\n` +
-                `- MD5: \`${u.md5}\`\n` +
-                `- sts: \`${u.sts}\`\n` +
-                `- Will auto-merge on CI pass`,
+                `- **Observed MD5:** \`${unknown.md5}\`\n` +
+                `- **Observed sts:** \`${unknown.sts}\`\n` +
+                `- **Observed:** ${unknown.count} of ${scan.samples} samples\n\n` +
+                `**Validated config:**\n` +
+                `\`\`\`json\n${JSON.stringify({ [hash]: entry }, null, 2)}\n\`\`\``,
                 true
               );
             }
 
+            core.setOutput('validated_count', String(additions.length));
+            core.setOutput('failure_count', String(failures.length));
+
+            if (additions.length === 0) {
+              core.setOutput('pr_url', '');
+              core.setOutput('branch', '');
+              if (failures.length > 0) {
+                throw new Error(`No configs were added. Validation failures: ${failures.join('; ')}`);
+              }
+              console.log('No new config entries need to be committed.');
+              return;
+            }
+
+            fs.writeFileSync(
+              absoluteConfigPath,
+              JSON.stringify(currentConfig, null, 2) + '\n'
+            );
+
+            // Validate the complete file with feliz-cipher's own parser before committing it.
+            execFileSync(
+              'node',
+              [
+                '--input-type=module',
+                '-e',
+                `import fs from 'node:fs'; import { parsePlayerConfigs } from './monitor/player-configs.mjs'; parsePlayerConfigs(fs.readFileSync('${configPath}', 'utf8')); console.log('player_configs.json schema OK');`
+              ],
+              {
+                cwd: workspace,
+                stdio: 'inherit',
+                timeout: 30000
+              }
+            );
+
+            execFileSync('git', ['config', 'user.name', 'Cipher Auto-Updater'], { cwd: workspace });
+            execFileSync('git', ['config', 'user.email', 'cipher-bot@horizonwireless-us'], { cwd: workspace });
+
+            const runId = process.env.GITHUB_RUN_ID;
+            const runAttempt = process.env.GITHUB_RUN_ATTEMPT || '1';
+            const branchName = `auto-add-players-${runId}-${runAttempt}`;
+            const hashes = additions.map(item => item.hash);
+
+            execFileSync('git', ['checkout', '-b', branchName], { cwd: workspace, stdio: 'inherit' });
+            execFileSync('git', ['add', configPath], { cwd: workspace, stdio: 'inherit' });
+            execFileSync(
+              'git',
+              ['commit', '-m', `config: auto-add YouTube player ${hashes.join(', ')}`],
+              { cwd: workspace, stdio: 'inherit' }
+            );
+            execFileSync('git', ['push', 'origin', branchName], { cwd: workspace, stdio: 'inherit' });
+
+            const bodyLines = [
+              '## Automated Player Config Update',
+              '',
+              'Validated against a real YouTube Music stream using `feliz-music/tests/validate-player-config.mjs`.',
+              '',
+              ...additions.flatMap(item => [
+                `- \`${item.hash}\` - md5 \`${item.observed.md5}\`, sts \`${item.entry.sts}\`, observed ${item.observed.count}/${scan.samples}`
+              ]),
+              '',
+              'The resulting `player_configs.json` was also parsed by feliz-cipher before this PR was opened.',
+              '',
+              '**This PR is eligible for automated merge after Cipher CI passes.**'
+            ];
+
+            const pr = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: additions.length === 1
+                ? `[AUTO] Add player config for ${hashes[0]}`
+                : `[AUTO] Add ${additions.length} YouTube player configs`,
+              head: branchName,
+              base: 'main',
+              body: bodyLines.join('\n')
+            });
+
+            core.setOutput('pr_url', pr.data.html_url);
+            core.setOutput('branch', branchName);
+
+            await notifyMattermost(
+              `✅ **Player config PR created**\n\n` +
+              `- PR: ${pr.data.html_url}\n` +
+              `- Players: ${hashes.map(h => `\`${h}\``).join(', ')}\n` +
+              `- Cipher CI will run before automated merge.`,
+              true
+            );
+
+            if (failures.length > 0) {
+              core.warning(`Some player validations failed: ${failures.join('; ')}`);
+            }
+
       - name: Send email notification
-        if: ${{ !cancelled() && steps.scan.outputs.unknown_count != '0' }}
+        if: ${{ always() && steps.scan.outputs.unknown_count != '0' }}
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.gmail.com
@@ -311,13 +353,18 @@ jobs:
           secure: true
           username: ${{ secrets.GMAIL_USERNAME }}
           password: ${{ secrets.GMAIL_APP_PASSWORD }}
-          subject: "New YouTube player(s) detected — cipher update required"
+          subject: "YouTube player monitor - ${{ steps.update.outcome }}"
           to: ${{ secrets.GMAIL_USERNAME }}
           from: Feliz CI <${{ secrets.GMAIL_USERNAME }}>
           body: |
-            New / unknown YouTube player(s) detected by the multi-sample monitor — cipher update required.
+            Unknown YouTube player(s) were detected.
 
             ${{ steps.scan.outputs.summary }}
 
-            Automated PRs have been created. Check:
-            https://github.com/horizonwireless-us/feliz-cipher/pulls
+            Validation/update result: ${{ steps.update.outcome }}
+            Validated configs added: ${{ steps.update.outputs.validated_count || '0' }}
+            Validation failures: ${{ steps.update.outputs.failure_count || '0' }}
+            PR: ${{ steps.update.outputs.pr_url || 'none' }}
+
+            Workflow run:
+            https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
