@@ -14,7 +14,20 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Validate player_configs.json schema
+        run: |
+          node --input-type=module -e "import fs from 'node:fs'; import { parsePlayerConfigs } from './monitor/player-configs.mjs'; parsePlayerConfigs(fs.readFileSync('library/src/main/assets/player_configs.json', 'utf8')); console.log('player_configs.json schema OK');"
+
+      - name: Run monitor harness tests
+        run: node --test monitor/scan-live-players.test.mjs
 
       - name: Set up JDK 21
         uses: actions/setup-java@v4
@@ -38,6 +51,3 @@ jobs:
 
       - name: Assemble cipher release AAR
         run: ./gradlew :library:assembleRelease
-
-      - name: Run monitor harness tests (pure Node)
-        run: node --test monitor/scan-live-players.test.mjs
