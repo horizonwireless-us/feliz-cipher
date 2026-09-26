@@ -2089,6 +2089,14 @@
         "ce582150"
       ]
     },
+    "55da8b08": {
+      "sig": "oP(47,1312,INPUT)",
+      "nClass": "MK",
+      "sts": 20693,
+      "aliases": [
+        "5fd9d177"
+      ]
+    },
     "7460dd14": {
       "sig": "hQ(40,3024,INPUT)",
       "nClass": "ZO",
