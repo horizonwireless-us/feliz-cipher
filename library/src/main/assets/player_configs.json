@@ -2120,6 +2120,30 @@
       "aliases": [
         "bfcc08c0"
       ]
+    },
+    "703ed7e6": {
+      "sig": "c7(21,4691,INPUT)",
+      "nClass": "uH",
+      "sts": 20721,
+      "aliases": [
+        "3c861897"
+      ]
+    },
+    "55da8b08": {
+      "sig": "oP(47,1312,INPUT)",
+      "nClass": "MK",
+      "sts": 20693,
+      "aliases": [
+        "5fd9d177"
+      ]
+    },
+    "852fbe33": {
+      "sig": "fG(21,4691,INPUT)",
+      "nClass": "XO",
+      "sts": 20721,
+      "aliases": [
+        "8da9649f"
+      ]
     }
   }
 }
