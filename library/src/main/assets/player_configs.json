@@ -2088,30 +2088,6 @@
       "aliases": [
         "ce582150"
       ]
-    },
-    "55da8b08": {
-      "sig": "oP(47,1312,INPUT)",
-      "nClass": "MK",
-      "sts": 20693,
-      "aliases": [
-        "5fd9d177"
-      ]
-    },
-    "7460dd14": {
-      "sig": "hQ(40,3024,INPUT)",
-      "nClass": "ZO",
-      "sts": 20717,
-      "aliases": [
-        "57523767"
-      ]
-    },
-    "852fbe33": {
-      "sig": "fG(21,4691,INPUT)",
-      "nClass": "XO",
-      "sts": 20721,
-      "aliases": [
-        "8da9649f"
-      ]
     }
   }
 }
