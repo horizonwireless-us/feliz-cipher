@@ -40,8 +40,10 @@ jobs:
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' }}
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub-hosted ubuntu runners already ship an Android SDK with licenses
+      # accepted; android-actions/setup-android@v3 is NOT used here because it
+      # runs `sdkmanager tools`, and the legacy `tools` package no longer exists
+      # in the SDK repository (replaced by cmdline-tools) → CI fails.
 
       - name: Configure Android SDK path
         run: echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
