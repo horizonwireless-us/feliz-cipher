@@ -2184,6 +2184,14 @@
       "aliases": [
         "25afbb31"
       ]
+    },
+    "ce46cb56": {
+      "sig": "Qn(65,5918,INPUT)",
+      "nClass": "CJ",
+      "sts": 20725,
+      "aliases": [
+        "32f205c3"
+      ]
     }
   }
 }
