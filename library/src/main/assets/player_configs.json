@@ -2336,6 +2336,14 @@
       "aliases": [
         "8c7aac80"
       ]
+    },
+    "41847f6b": {
+      "sig": "Ya(5,5449,INPUT)",
+      "nClass": "Pb",
+      "sts": 20738,
+      "aliases": [
+        "e5b5c44d"
+      ]
     }
   }
 }
