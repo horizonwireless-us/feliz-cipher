@@ -2456,6 +2456,14 @@
       "aliases": [
         "fa84a16e"
       ]
+    },
+    "5008be0a": {
+      "sig": "Gl(17,1452,INPUT)",
+      "nClass": "Fl",
+      "sts": 20746,
+      "aliases": [
+        "09451b48"
+      ]
     }
   }
 }
