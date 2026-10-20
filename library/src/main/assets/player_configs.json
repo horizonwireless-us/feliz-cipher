@@ -2440,6 +2440,14 @@
       "aliases": [
         "938ea829"
       ]
+    },
+    "f00759e4": {
+      "sig": "zl(17,5122,INPUT)",
+      "nClass": "Gx",
+      "sts": 20745,
+      "aliases": [
+        "fd1e678e"
+      ]
     }
   }
 }
