@@ -7,11 +7,11 @@
 //   node tests/scan-live-players.mjs <player_configs.json> [samples]
 //   SAMPLES=30 node tests/scan-live-players.mjs /tmp/player_configs.json
 //
-// stdout: machine-readable JSON { samples, requested, distinct:[{hash,count}],
-//         unknown:[{hash,count,md5,sts}] } for the workflow to act on.
+// stdout: JSON { status, samples, requested, distinct, unknown, fetches }.
 // stderr: a human one-line summary.
 // Use --max-http-header-size=65536 when invoking Node (YouTube sends >16 KB headers).
-// Exit 1 for an invalid config or a scan with no player observations.
+// A successful fetch without hashes is inconclusive, not a failure. Exit 1 for
+// invalid configs or when every attempted fetch fails.
 
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -45,21 +45,32 @@ export function coveredKeys(configsText, file) {
   return keys;
 }
 
-const fetchErrors = new Set();
-async function fetchText(url) {
-  try {
-    const r = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) });
-    if (!r.ok) {
-      fetchErrors.add(`HTTP ${r.status} (${new URL(url).hostname})`);
-      await r.body?.cancel();
+export function createTextFetcher(request = fetch) {
+  const stats = { attempted: 0, succeeded: 0, failed: 0 };
+  const errors = new Set();
+  async function text(url) {
+    stats.attempted++;
+    try {
+      const r = await request(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) });
+      if (!r.ok) {
+        errors.add(`HTTP ${r.status} (${new URL(url).hostname})`);
+        // The HTTP error is enough; a cleanup error must not count a second failure.
+        try { await r.body?.cancel(); } catch {}
+        stats.failed++;
+        return "";
+      }
+      const body = await r.text();
+      stats.succeeded++;
+      return body;
+    } catch (error) {
+      stats.failed++;
+      errors.add(error.cause?.code || error.name);
       return "";
     }
-    return await r.text();
-  } catch (error) {
-    fetchErrors.add(error.cause?.code || error.name);
-    return "";
   }
+  return { text, stats, errors };
 }
+const { text: fetchText, stats: fetchStats, errors: fetchErrors } = createTextFetcher();
 const hashFrom = (body, re) => (body.match(re) || [])[1] || null;
 
 // A stable, always-available public video for the watch/embed surfaces. The player served is
@@ -84,12 +95,9 @@ async function playerIdentity(hash) {
   return { md5: null, sts: null };
 }
 
-/** A scan without observations cannot establish coverage. URL hashes need explicit entries. */
-export async function summarizeScan(samples, covered, identify = playerIdentity) {
+/** Keep observation results separate from transport failures. */
+export async function summarizeScan(samples, covered, identify = playerIdentity, requests = {}) {
   const distinct = aggregate(samples);
-  if (!distinct.length) {
-    throw new Error("No YouTube player hashes were observed; coverage is unknown. Check network access and player-page parsing.");
-  }
   const unknown = [];
   for (const d of distinct) {
     if (covered.has(d.hash)) continue;
@@ -98,7 +106,10 @@ export async function summarizeScan(samples, covered, identify = playerIdentity)
     const { md5, sts } = await identify(d.hash);
     unknown.push({ ...d, md5, sts });
   }
-  return { samples: samples.filter(Boolean).length, distinct, unknown };
+  const status = distinct.length
+    ? (unknown.length ? "unknown_players" : "covered")
+    : (requests.attempted > 0 && requests.failed === requests.attempted ? "fetch_failed" : "inconclusive");
+  return { status, samples: samples.filter(Boolean).length, distinct, unknown };
 }
 
 async function main() {
@@ -120,15 +131,22 @@ async function main() {
   for (let i = 0; i < aux; i++) samples.push(await sampleWatch());
   for (let i = 0; i < aux; i++) samples.push(await sampleEmbed());
 
-  const { samples: seen, distinct, unknown } = await summarizeScan(samples, covered);
-  console.log(JSON.stringify({ samples: seen, requested, distinct, unknown }, null, 2));
+  const { status, samples: seen, distinct, unknown } = await summarizeScan(samples, covered, playerIdentity, fetchStats);
+  console.log(JSON.stringify({ status, samples: seen, requested, distinct, unknown,
+    fetches: { ...fetchStats, errors: [...fetchErrors] } }, null, 2));
   process.stderr.write(
     `scanned ${seen} samples -> ${distinct.length} distinct: ` +
       distinct.map((d) => `${d.hash}=${d.count}${covered.has(d.hash) ? "" : "(NEW)"}`).join(" ") +
-      (unknown.length
+      (status === "inconclusive"
+        ? "\nno hashes observed; scan inconclusive, coverage not assessed\n"
+        : status === "fetch_failed"
+        ? "\nall player requests failed; coverage could not be assessed\n"
+        : unknown.length
         ? `\nUNKNOWN: ${unknown.map((u) => `${u.hash} (seen ${u.count}x, md5 ${u.md5}, sts ${u.sts})`).join("; ")}\n`
-        : "\nall covered\n"),
+        : "\nall observed hashes covered\n"),
   );
+  if (fetchErrors.size) console.error(`Fetch errors: ${[...fetchErrors].join(", ")}`);
+  if (status === "fetch_failed") process.exitCode = 1;
 }
 
 // Only run main when invoked directly (not when imported by the unit test).
