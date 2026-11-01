@@ -10,7 +10,8 @@
 // stdout: machine-readable JSON { samples, requested, distinct:[{hash,count}],
 //         unknown:[{hash,count,md5,sts}] } for the workflow to act on.
 // stderr: a human one-line summary.
-// Exit 0 normally; exit 1 if the config file is invalid (devices reject it wholesale).
+// Use --max-http-header-size=65536 when invoking Node (YouTube sends >16 KB headers).
+// Exit 1 for an invalid config or a scan with no player observations.
 
 import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
@@ -44,11 +45,18 @@ export function coveredKeys(configsText, file) {
   return keys;
 }
 
+const fetchErrors = new Set();
 async function fetchText(url) {
   try {
-    const r = await fetch(url, { headers: { "User-Agent": UA } });
-    return r.ok ? await r.text() : "";
-  } catch {
+    const r = await fetch(url, { headers: { "User-Agent": UA }, signal: AbortSignal.timeout(15000) });
+    if (!r.ok) {
+      fetchErrors.add(`HTTP ${r.status} (${new URL(url).hostname})`);
+      await r.body?.cancel();
+      return "";
+    }
+    return await r.text();
+  } catch (error) {
+    fetchErrors.add(error.cause?.code || error.name);
     return "";
   }
 }
@@ -76,6 +84,23 @@ async function playerIdentity(hash) {
   return { md5: null, sts: null };
 }
 
+/** A scan without observations cannot establish coverage. URL hashes need explicit entries. */
+export async function summarizeScan(samples, covered, identify = playerIdentity) {
+  const distinct = aggregate(samples);
+  if (!distinct.length) {
+    throw new Error("No YouTube player hashes were observed; coverage is unknown. Check network access and player-page parsing.");
+  }
+  const unknown = [];
+  for (const d of distinct) {
+    if (covered.has(d.hash)) continue;
+    // A known MD5 does not cover this URL hash on installed Android clients. Keep it
+    // in the validation queue so the publisher can add it to the existing aliases.
+    const { md5, sts } = await identify(d.hash);
+    unknown.push({ ...d, md5, sts });
+  }
+  return { samples: samples.filter(Boolean).length, distinct, unknown };
+}
+
 async function main() {
   const [file, samplesArg] = process.argv.slice(2);
   if (!file) {
@@ -95,16 +120,7 @@ async function main() {
   for (let i = 0; i < aux; i++) samples.push(await sampleWatch());
   for (let i = 0; i < aux; i++) samples.push(await sampleEmbed());
 
-  const distinct = aggregate(samples);
-  const unknown = [];
-  for (const d of distinct) {
-    if (covered.has(d.hash)) continue;
-    const { md5, sts } = await playerIdentity(d.hash);
-    if (md5 && covered.has(md5)) continue; // covered via its md5 alias
-    unknown.push({ hash: d.hash, count: d.count, md5, sts });
-  }
-
-  const seen = samples.filter(Boolean).length;
+  const { samples: seen, distinct, unknown } = await summarizeScan(samples, covered);
   console.log(JSON.stringify({ samples: seen, requested, distinct, unknown }, null, 2));
   process.stderr.write(
     `scanned ${seen} samples -> ${distinct.length} distinct: ` +
@@ -119,6 +135,7 @@ async function main() {
 if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((e) => {
     console.error(e.message);
+    if (fetchErrors.size) console.error(`Fetch errors: ${[...fetchErrors].join(", ")}`);
     process.exit(1);
   });
 }

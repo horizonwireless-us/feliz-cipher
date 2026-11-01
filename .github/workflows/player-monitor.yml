@@ -12,6 +12,10 @@ concurrency:
 jobs:
   check-player:
     runs-on: ubuntu-latest
+    env:
+      # YouTube responses exceed Node's default 16 KB header limit; otherwise
+      # native fetch rejects every sample with UND_ERR_HEADERS_OVERFLOW.
+      NODE_OPTIONS: --max-http-header-size=65536
     permissions:
       contents: read
 
@@ -83,9 +87,11 @@ jobs:
             const fs = require('fs');
             const path = require('path');
             const { execFileSync } = require('child_process');
+            const { pathToFileURL } = require('url');
 
             const workspace = process.env.GITHUB_WORKSPACE;
             const musicDir = path.join(workspace, 'feliz-music');
+            const { mergePlayerConfig } = await import(pathToFileURL(path.join(workspace, 'monitor/merge-player-config.mjs')).href);
             const configPath = 'library/src/main/assets/player_configs.json';
             const absoluteConfigPath = path.join(workspace, configPath);
             const scan = JSON.parse(fs.readFileSync('/tmp/scan.json', 'utf8'));
@@ -141,22 +147,6 @@ jobs:
               }
 
               return entry;
-            }
-
-            function findCollision(players, hash, entry) {
-              const newAliases = new Set(entry.aliases || []);
-
-              for (const [existingHash, existing] of Object.entries(players)) {
-                const existingAliases = new Set(existing.aliases || []);
-                if (existingHash === hash) return existingHash;
-                if (newAliases.has(existingHash)) return existingHash;
-                if (existingAliases.has(hash)) return existingHash;
-                for (const alias of newAliases) {
-                  if (existingAliases.has(alias)) return existingHash;
-                }
-              }
-
-              return null;
             }
 
             if (!process.env.YT_COOKIE) {
@@ -229,17 +219,19 @@ jobs:
                 continue;
               }
 
-              const collision = findCollision(currentConfig.players, hash, entry);
-              if (collision) {
-                console.log(`Player ${hash} is already represented by ${collision}; skipping.`);
-                await notifyMattermost(
-                  `ℹ️ **Player \`${hash}\` is already represented by \`${collision}\`** - no config change is required.`,
-                  true
-                );
+              let merged;
+              try {
+                merged = mergePlayerConfig(currentConfig.players, hash, entry);
+              } catch (error) {
+                failures.push(`${hash}: ${error.message}`);
+                core.warning(error.message);
+                continue;
+              }
+              if (!merged.changed) {
+                console.log(`Player ${hash} is already published under ${merged.primary}; skipping.`);
                 continue;
               }
 
-              currentConfig.players[hash] = entry;
               additions.push({ hash, entry, observed: unknown });
 
               await notifyMattermost(

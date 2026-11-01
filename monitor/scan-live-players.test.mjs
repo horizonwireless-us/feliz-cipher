@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { aggregate, coveredKeys } from "./scan-live-players.mjs";
+import { aggregate, coveredKeys, summarizeScan } from "./scan-live-players.mjs";
 
 test("aggregate counts and sorts most-seen first, dropping nulls", () => {
   const out = aggregate(["aaaaaaaa", "bbbbbbbb", "aaaaaaaa", null, "aaaaaaaa", "bbbbbbbb"]);
@@ -41,4 +41,21 @@ test("coveredKeys includes both primaries and aliases", () => {
 
 test("coveredKeys throws on an invalid config (device would reject it wholesale)", () => {
   assert.throws(() => coveredKeys(JSON.stringify({ players: {} }), "bad.json"));
+});
+
+test("a scan with no observations fails instead of reporting all covered", async () => {
+  await assert.rejects(summarizeScan([null, null], new Set()), /coverage is unknown/);
+});
+
+test("an unknown URL hash still requires publication when its MD5 alias is known", async () => {
+  const scan = await summarizeScan(["11a45ffb", null, "11a45ffb"], new Set(["950316ef", "b5f7c4ff"]),
+    async () => ({ md5: "b5f7c4ff", sts: 20753 }));
+  assert.equal(scan.samples, 2);
+  assert.deepEqual(scan.unknown, [{ hash: "11a45ffb", count: 2, md5: "b5f7c4ff", sts: 20753 }]);
+});
+
+test("a published URL alias is covered without downloading its player", async () => {
+  const scan = await summarizeScan(["11a45ffb"], new Set(["11a45ffb"]),
+    async () => assert.fail("covered players must not be downloaded"));
+  assert.deepEqual(scan.unknown, []);
 });
