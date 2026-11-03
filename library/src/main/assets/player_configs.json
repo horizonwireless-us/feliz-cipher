@@ -2617,7 +2617,16 @@
       "nClass": "HD",
       "sts": 20759,
       "aliases": [
-        "40cb3334"
+        "40cb3334",
+        "d1e7acbd"
+      ]
+    },
+    "ef321720": {
+      "sig": "TG(57,7106,INPUT)",
+      "nClass": "xx",
+      "sts": 20759,
+      "aliases": [
+        "ac841426"
       ]
     }
   }
