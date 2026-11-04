@@ -2636,6 +2636,14 @@
       "aliases": [
         "f1cf8a93"
       ]
+    },
+    "d07d6ece": {
+      "sig": "gm(18,2147,INPUT)",
+      "nClass": "ch",
+      "sts": 20760,
+      "aliases": [
+        "05ac6f6c"
+      ]
     }
   }
 }
