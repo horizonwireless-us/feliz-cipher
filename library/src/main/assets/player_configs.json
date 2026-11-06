@@ -2661,6 +2661,14 @@
       "aliases": [
         "bbdc8962"
       ]
+    },
+    "ba99d814": {
+      "sig": "Hz(11,6439,INPUT)",
+      "nClass": "KJ",
+      "sts": 20763,
+      "aliases": [
+        "204d29b0"
+      ]
     }
   }
 }
