@@ -2680,6 +2680,22 @@
         "e28c829a",
         "2e127273"
       ]
+    },
+    "027f738a": {
+      "sig": "ge(67,3409,INPUT)",
+      "nClass": "Do",
+      "sts": 20767,
+      "aliases": [
+        "8784e2c2"
+      ]
+    },
+    "fad7e4e9": {
+      "sig": "hj(67,3409,INPUT)",
+      "nClass": "io",
+      "sts": 20767,
+      "aliases": [
+        "b1dea243"
+      ]
     }
   }
 }
