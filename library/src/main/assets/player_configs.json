@@ -2862,6 +2862,14 @@
       "aliases": [
         "eee87f91"
       ]
+    },
+    "9244921b": {
+      "sig": "od(18,7746,INPUT)",
+      "nClass": "nd",
+      "sts": 20780,
+      "aliases": [
+        "de68a001"
+      ]
     }
   }
 }
